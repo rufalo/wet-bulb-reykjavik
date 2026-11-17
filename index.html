@@ -88,6 +88,35 @@
   summary { cursor: pointer; text-align: center; list-style: none; }
   summary::-webkit-details-marker { display: none; }
   details p { margin: 10px 0 0; }
+
+  /* Add-to-home-screen helper */
+  .install {
+    margin-top: 22px;
+    background: rgba(92, 200, 255, 0.10);
+    border: 1px solid rgba(92, 200, 255, 0.35);
+    border-radius: 18px;
+    padding: 16px;
+    position: relative;
+    font-size: 15px;
+    line-height: 1.45;
+  }
+  .install[hidden], .install-link[hidden] { display: none; }
+  .install h2 { font-size: 16px; margin: 0 28px 6px 0; }
+  .install p { margin: 6px 0 0; color: #d3e4f0; }
+  .install .steps { margin: 8px 0 0; padding-left: 20px; color: #d3e4f0; }
+  .install .steps li { margin: 4px 0; }
+  .install .row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .install .row button { margin: 0; flex: 1 1 140px; padding: 12px; font-size: 15px; }
+  .install .row button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+  .install .close {
+    position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; margin: 0; padding: 0;
+    background: transparent; color: var(--muted); font-size: 20px; line-height: 1; border-radius: 50%;
+  }
+  .ico { display: inline-block; width: 1.15em; height: 1.15em; vertical-align: -0.2em; }
+  .install-link {
+    display: block; margin: 14px auto 0; background: none; border: 0; color: var(--accent);
+    font: inherit; font-size: 14px; width: auto; padding: 4px; cursor: pointer;
+  }
 </style>
 </head>
 <body>
@@ -112,8 +141,14 @@
   <div class="meta" id="meta"></div>
   <div class="err" id="err"></div>
 
+  <section class="install" id="install" hidden aria-live="polite">
+    <button class="close" id="install-close" type="button" aria-label="Dismiss">×</button>
+    <div id="install-body"></div>
+  </section>
+
   <div class="spacer"></div>
   <button id="refresh" type="button">Refresh</button>
+  <button class="install-link" id="install-show" type="button" hidden>📲 Add to home screen</button>
   <details>
     <summary>What is wet bulb? ▾</summary>
     <p>The wet bulb temperature is the lowest temperature air can be cooled to by evaporating water into it — what a thermometer wrapped in a wet cloth would read. Dry air gives a big gap below the air temperature; at 100% humidity they are equal.</p>
@@ -317,6 +352,130 @@
 
   // Exposed for quick sanity checks in the console.
   window.wetBulb = wetBulb;
+})();
+
+// ---- Add-to-home-screen helper -------------------------------------------
+(() => {
+  const ua = navigator.userAgent || "";
+  const isIOS = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/i.test(ua);
+  const isStandalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  // In-app browsers (Messenger, Facebook, Instagram, etc.) can't add to home screen.
+  const inApp = /FBAN|FBAV|FB_IAB|FBIOS|Messenger|Orca-Android|Instagram|Snapchat|Line\/|MicroMessenger|TikTok|musical_ly|BytedanceWebview|Twitter|LinkedInApp/i.test(ua)
+    || (isAndroid && /; wv\)/.test(ua));
+  const appName = /Instagram/i.test(ua) ? "Instagram" : /FBAN\/Messenger|Messenger|Orca/i.test(ua) ? "Messenger" : /FBAN|FBAV|FB_IAB/i.test(ua) ? "Facebook" : "this app";
+  const iosSafariLike = isIOS && !inApp;
+  const isIOSChrome = isIOS && /CriOS/i.test(ua);
+
+  const box = document.getElementById("install");
+  const body = document.getElementById("install-body");
+  const showLink = document.getElementById("install-show");
+  const DISMISS_KEY = "wetbulb:install-dismissed";
+  let deferredPrompt = null;
+
+  if (isStandalone) return; // Already opened from the home screen.
+
+  const shareIcon = '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Share"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>';
+
+  function dismissed() { try { return localStorage.getItem(DISMISS_KEY) === "1"; } catch { return false; } }
+  function setDismissed(v) { try { v ? localStorage.setItem(DISMISS_KEY, "1") : localStorage.removeItem(DISMISS_KEY); } catch {} }
+
+  async function copyLink(btn) {
+    const url = location.href.split("#")[0];
+    let ok = false;
+    try { await navigator.clipboard.writeText(url); ok = true; } catch {
+      const ta = document.createElement("textarea");
+      ta.value = url; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      try { ok = document.execCommand("copy"); } catch {}
+      ta.remove();
+    }
+    btn.textContent = ok ? "Link copied ✓" : url;
+  }
+
+  function openExternal() {
+    const { host, pathname, search } = location;
+    if (isAndroid) {
+      const fallback = encodeURIComponent(location.href);
+      location.href = `intent://${host}${pathname}${search}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${fallback};end`;
+    } else if (isIOS) {
+      // Works on iOS 17+; on older versions nothing happens and the written steps still apply.
+      location.href = `x-safari-https://${host}${pathname}${search}`;
+    }
+  }
+
+  function render() {
+    let html = "";
+    const actions = [];
+    if (deferredPrompt) {
+      html = `<h2>Install Wet Bulb</h2><p>Add it to your home screen to check the wet bulb with one tap.</p>`;
+      actions.push(["Install app", "install", ""]);
+    } else if (inApp) {
+      const browser = isIOS ? "Safari" : "Chrome";
+      html = `<h2>Open in ${browser} to add to home screen</h2>
+        <p>You're viewing this inside ${appName}, which can't add apps to your home screen.</p>
+        <ol class="steps">
+          <li>Tap <b>Open in ${browser}</b> below${isIOS ? " (iOS 17+)" : ""}, <i>or</i> tap the <b>⋯</b> / <b>⋮</b> menu and choose <b>Open in ${isIOS ? "Safari" : "browser"}</b>.</li>
+          <li>There, ${isIOS ? `tap Share ${shareIcon} → <b>Add to Home Screen</b>` : `tap <b>Install app</b> (or ⋮ → <b>Add to Home screen</b>)`}.</li>
+        </ol>`;
+      if (isIOS || isAndroid) actions.push([`Open in ${browser}`, "open", ""]);
+      actions.push(["Copy link", "copy", "ghost"]);
+    } else if (iosSafariLike) {
+      html = `<h2>Add to your home screen</h2>
+        <ol class="steps">
+          <li>Tap the Share button ${shareIcon}${isIOSChrome ? " in the address bar" : " (in newer iOS it's under the <b>⋯</b> button)"}.</li>
+          <li>Scroll down and tap <b>Add to Home Screen</b>.</li>
+          <li>Tap <b>Add</b>.</li>
+        </ol>`;
+    } else if (isAndroid) {
+      html = `<h2>Add to your home screen</h2>
+        <ol class="steps">
+          <li>Tap the browser menu <b>⋮</b>.</li>
+          <li>Tap <b>Add to Home screen</b> or <b>Install app</b>.</li>
+        </ol>`;
+    } else {
+      return hide(); // Desktop without install support: nothing to suggest.
+    }
+    if (actions.length) {
+      html += `<div class="row">${actions.map(([label, act, cls]) => `<button type="button" class="${cls}" data-act="${act}">${label}</button>`).join("")}</div>`;
+    }
+    body.innerHTML = html;
+    box.hidden = false;
+    showLink.hidden = true;
+  }
+
+  function hide() {
+    box.hidden = true;
+    showLink.hidden = !(deferredPrompt || inApp || isIOS || isAndroid);
+  }
+
+  body.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    const act = btn.dataset.act;
+    if (act === "copy") copyLink(btn);
+    else if (act === "open") openExternal();
+    else if (act === "install" && deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice.catch(() => ({}));
+      deferredPrompt = null;
+      if (outcome === "accepted") { box.hidden = true; showLink.hidden = true; } else render();
+    }
+  });
+
+  document.getElementById("install-close").addEventListener("click", () => { setDismissed(true); hide(); });
+  showLink.addEventListener("click", () => { setDismissed(false); render(); });
+
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    // A real install button is worth showing even if the instructions were dismissed before.
+    if (!box.hidden || !dismissed()) render(); else showLink.hidden = false;
+  });
+  window.addEventListener("appinstalled", () => { deferredPrompt = null; box.hidden = true; showLink.hidden = true; });
+
+  // In-app browsers always get the prompt (they can't install at all); others respect dismissal.
+  if (inApp || !dismissed()) render(); else hide();
 })();
 </script>
 </body>

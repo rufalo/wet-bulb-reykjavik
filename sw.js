@@ -1,6 +1,6 @@
 // Minimal service worker: caches the app shell so it opens instantly / offline.
 // Weather API requests always go to the network.
-const CACHE = "wetbulb-v1";
+const CACHE = "wetbulb-v2";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "assets/icon.svg", "assets/icon-180.png", "assets/icon-192.png", "assets/icon-512.png"];
 
 self.addEventListener("install", (e) => {
